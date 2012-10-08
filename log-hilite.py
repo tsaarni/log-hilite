@@ -25,6 +25,10 @@
 
 import sys
 import re
+import argparse
+import subprocess
+import thread
+
 
 class style: NORMAL = '0'; BOLD = '1'; UNDERLINE = '4'; NEGATIVE = '7';
 class fg:    BLACK = '30'; RED = '31'; GREEN = '32'; YELLOW = '33'; BLUE = '34'; MAGENTA = '35'; CYAN = '36'; WHITE = '37'; RESET = '39';
@@ -55,7 +59,6 @@ def ansi(*args):
     return closure
 
 
-
 HOUR = ansi(style.NORMAL, fg.RED, bg.BLACK)
 TIME = ansi(fg.GREEN)
 PASS = lambda x: x
@@ -72,7 +75,8 @@ patterns = [
 
 class Highlighter:
 
-    def __init__(self, patterns):
+    def __init__(self, patterns, log_prefix):
+        self.log_prefix = log_prefix
         self.compiled_patterns = []
         for pattern, action in patterns:
             self.compiled_patterns.append((re.compile(pattern), action))
@@ -85,17 +89,40 @@ class Highlighter:
         
 
     def process_file(self, infile, outfile):
-        for line in infile.readlines():
-            outfile.write(self.substituter(line))
+        while True:
+            line = infile.readline()
+            if line == '':
+                break
+            outfile.write(self.log_prefix + self.substituter(line))
             
 
-def main(argv):    
-    h = Highlighter(patterns)
-    if len(argv) == 1:
-        h.process_file(sys.stdin, sys.stdout)
-    elif len(argv) > 1:
-        for fname in argv[1:]:
-            h.process_file(file(fname), sys.stdout)
+def start_filtering(pats, infile, outfile, log_prefix=''):
+    h = Highlighter(pats, log_prefix)
+    h.process_file(infile, outfile)
+
+            
+def main(argv):
+
+    p = argparse.ArgumentParser()
+    p.add_argument('-f', '--follow', action="store_true", default=False, help='output appended data as file grows, same as tail -f')
+    p.add_argument('files', nargs=argparse.REMAINDER)
+    args = p.parse_args()
+
+    if len(args.files) == 0:
+        start_filtering(patterns, sys.stdin, sys.stdout)
+    elif len(args.files) > 0:
+        
+        if args.follow == True:
+            processes = []
+            for fname in args.files:
+                p = subprocess.Popen(['tail', '-f', fname], stdout=subprocess.PIPE, bufsize=0)
+                thread.start_new_thread(start_filtering, (patterns, p.stdout, sys.stdout, fname + ': '))
+                processes.append(p)
+            for p in processes:
+                p.wait()
+        else:
+            for fname in args.files:
+                start_filtering(patterns, file(fname), sys.stdout)
         
 
 if __name__ == '__main__':
